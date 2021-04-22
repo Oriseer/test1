@@ -1,32 +1,41 @@
-# Backup storage directory 
-backupfolder=/var/backups
-# Notification email address 
-recipient_email=<username@mail.com>
-# MySQL user
-user=<user_name>
-# MySQL password
-password=<password>
-# Number of days to store the backup 
-keep_day=30 
-sqlfile=$backupfolder/all-database-$(date +%d-%m-%Y_%H-%M-%S).sql
-zipfile=$backupfolder/all-database-$(date +%d-%m-%Y_%H-%M-%S).zip 
-# Create a backup 
-sudo mysqldump -u $user -p$password --all-databases > $sqlfile 
-if [ $? == 0 ]; then
-  echo 'Sql dump created' 
-else
-  echo 'mysqldump return non-zero code' | mailx -s 'No backup was created!' $recipient_email  
-  exit 
-fi 
-# Compress backup 
-zip $zipfile $sqlfile 
-if [ $? == 0 ]; then
-  echo 'The backup was successfully compressed' 
-else
-  echo 'Error compressing backup' | mailx -s 'Backup was not created!' $recipient_email 
-  exit 
-fi 
-rm $sqlfile 
-echo $zipfile | mailx -s 'Backup was successfully created' $recipient_email 
-# Delete old backups 
-find $backupfolder -mtime +$keep_day -delete
+#!/bin/bash
+#----------------------------------------
+# OPTIONS
+#----------------------------------------
+USER='root'       # MySQL User
+PASSWORD='webdev' # MySQL Password
+DAYS_TO_KEEP=0    # 0 to keep forever
+GZIP=1            # 1 = Compress
+BACKUP_PATH='/backups/mysql'
+#----------------------------------------
+
+# Create the backup folder
+if [ ! -d $BACKUP_PATH ]; then
+  mkdir -p $BACKUP_PATH
+fi
+
+# Get list of database names
+databases=`mysql -u $USER -p$PASSWORD -e "SHOW DATABASES;" | tr -d "|" | grep -v Database`
+
+for db in $databases; do
+
+  if [ $db == 'information_schema' ] || [ $db == 'performance_schema' ] || [ $db == 'mysql' ] || [ $db == 'sys' ]; then
+    echo "Skipping database: $db"
+    continue
+  fi
+  
+  date=$(date -I)
+  if [ "$GZIP" -eq 0 ] ; then
+    echo "Backing up database: $db without compression"      
+    mysqldump -u $USER -p$PASSWORD --databases $db > $BACKUP_PATH/$date-$db.sql
+  else
+    echo "Backing up database: $db with compression"
+    mysqldump -u $USER -p$PASSWORD --databases $db | gzip -c > $BACKUP_PATH/$date-$db.gz
+  fi
+done
+
+# Delete old backups
+if [ "$DAYS_TO_KEEP" -gt 0 ] ; then
+  echo "Deleting backups older than $DAYS_TO_KEEP days"
+  find $BACKUP_PATH/* -mtime +$DAYS_TO_KEEP -exec rm {} \;
+fi
